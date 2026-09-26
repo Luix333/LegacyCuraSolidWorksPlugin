@@ -17,18 +17,73 @@ but haven't been tried.
 
 ## Installing
 
-**From a package:** drag `CuraSolidWorksPlugin-<version>.curapackage` onto Cura's window, then restart Cura.
-Build the package yourself with `python tools/build_package.py` (any Python 3); it lands in `dist/`.
+The plugin isn't in the Cura Marketplace, so it is installed by hand, in one of the two ways below. Every Cura version
+keeps its own plugins: if you have several Cura versions installed, install it into each one you use, and again after
+upgrading to a new Cura version.
 
-**From source:** copy (or clone) this repository into Cura's plugin folder as `CuraSolidWorksPlugin`, for example
-`%APPDATA%\cura\5.13\plugins\CuraSolidWorksPlugin`, and restart Cura.
+If you have another SolidWorks plugin installed, for example thopiekar's *CuraSolidWorksPlugin*, uninstall it first
+(see [Uninstalling](#uninstalling)): both use the plugin ID `CuraSolidWorksPlugin`, and Cura loads only one of them.
 
-Remove any other SolidWorks plugin with the same ID first (for example thopiekar's *CuraSolidWorksPlugin*); Cura loads
-only one plugin per folder name.
+### Option 1: the package file (recommended)
+
+1. Download `CuraSolidWorksPlugin-<version>.curapackage` from the
+   [Releases page](https://github.com/Luix333/LegacyCuraSolidWorksPlugin/releases).
+   Or build it from a copy of this repository with `python tools/build_package.py` (any Python 3); it is written to
+   `dist\`.
+2. Start Cura and drag the `.curapackage` file from Explorer onto the Cura window.
+   Cura answers *"This package will be installed after restarting."*
+3. Close Cura and start it again.
+
+To update, drag the newer package onto Cura the same way and restart.
+
+### Option 2: copy the plugin folder
+
+1. On this repository's GitHub page, choose **Code > Download ZIP** and extract the ZIP.
+2. In Cura, choose **Help > Show Configuration Folder**. Explorer opens Cura's configuration folder, for example
+   `C:\Users\<you>\AppData\Roaming\cura\5.13`. Open the `plugins` folder in it, or create it if there isn't one.
+3. Close Cura.
+4. Move the extracted folder into `plugins` and rename it to `CuraSolidWorksPlugin`. `plugin.json` and `__init__.py`
+   have to be directly inside that folder:
+
+   ```
+   ...\cura\5.13\plugins\CuraSolidWorksPlugin\plugin.json
+   ...\cura\5.13\plugins\CuraSolidWorksPlugin\__init__.py
+   ...\cura\5.13\plugins\CuraSolidWorksPlugin\SolidWorksReader.py
+   ...
+   ```
+
+   Windows' *Extract All* often creates a folder inside a folder of the same name; move the inner one.
+5. Start Cura.
+
+With git, clone straight into place instead (in a Command Prompt, with your Cura version in the path), and update later
+with `git pull` in that folder:
+
+    git clone https://github.com/Luix333/LegacyCuraSolidWorksPlugin.git "%APPDATA%\cura\5.13\plugins\CuraSolidWorksPlugin"
+
+### Checking that it works
+
+After restarting Cura:
+
+* the **Extensions** menu has a **SolidWorks Integration** entry, and
+* the file type list in **File > Open File(s)** includes *SolidWorks part file* and *SolidWorks assembly file*.
+
+If the menu entry is there but the file types aren't, the plugin loaded but didn't find SolidWorks on this computer
+(it looks for the `SldWorks.Application` automation server that the SolidWorks installer registers); repairing the
+SolidWorks installation usually fixes that. If the menu entry is missing, Cura didn't load the plugin: check the folder
+layout from step 4 and that no other SolidWorks plugin is installed, then look for `CuraSolidWorksPlugin` in `cura.log`,
+which is in the configuration folder from step 2.
+
+### Uninstalling
+
+* **Installed from a package:** in Cura, open **Marketplace** (top right), click the **Manage packages** icon, find
+  *SolidWorks Integration* and choose **Uninstall**, then restart Cura.
+* **Copied by hand:** close Cura and delete the `plugins\CuraSolidWorksPlugin` folder.
+
+The plugin's own settings (mesh resolution, transfer format) stay in Cura's preferences; they do no harm.
 
 ## Using it
 
-* **File > Open** now lists SolidWorks part and assembly files. Cura asks which mesh resolution SolidWorks should use:
+* **File > Open File(s)** now lists SolidWorks part and assembly files. Cura asks which mesh resolution SolidWorks should use:
   *Fine*, *Coarse*, or *As set in SolidWorks* (your own settings under *Options > Export > STL*). Tick
   *Remember my choice* to stop being asked.
 * **Extensions > SolidWorks Integration > Configure** changes that choice and the transfer format:
