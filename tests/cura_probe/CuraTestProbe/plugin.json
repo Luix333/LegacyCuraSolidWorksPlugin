@@ -1,0 +1,7 @@
+{
+    "name": "Cura Test Probe",
+    "author": "test",
+    "version": "0.0.1",
+    "description": "Test-only command probe.",
+    "supported_sdk_versions": ["8.0.0"]
+}

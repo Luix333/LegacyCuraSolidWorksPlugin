@@ -98,6 +98,9 @@ Compared with the legacy plugin:
 
 It prints the mesh statistics and fails if the export has the wrong size or SolidWorks' preferences weren't restored.
 
+[`tests/cura_probe`](tests/cura_probe/README.md) is a test-only Cura plugin for scripting a throwaway Cura: open files,
+answer the plugin's dialog, and read back where the models ended up.
+
 ## License
 
 LGPLv3 or later, see [LICENSE](LICENSE). The bundled comtypes is MIT licensed.
