@@ -1,0 +1,7 @@
+# SolidWorks runs .swb macros as VBA source, which expects Windows line endings.
+*.swb text eol=crlf
+# Binary assets.
+*.gif binary
+*.bmp binary
+*.SLDPRT binary
+*.SLDASM binary

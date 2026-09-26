@@ -1,0 +1,124 @@
+' Export to Cura
+' Opens the active SolidWorks part or assembly in UltiMaker Cura.
+'
+' Cura needs the "SolidWorks Integration" plugin, which asks this SolidWorks to convert the document
+' (unsaved changes included) and keeps a link to the file: after you save it again, Cura offers to reload it.
+' https://github.com/Luix333/LegacyCuraSolidWorksPlugin
+'
+' Cura is found through the program Windows opens Cura models with, or else as the newest
+' "UltiMaker Cura" / "Ultimaker Cura" folder in Program Files. If Cura is already running and
+' "Use a single instance of Cura" is on (Preferences > General), the model opens in that window.
+
+Option Explicit
+
+Const swDocPART = 1
+Const swDocASSEMBLY = 2
+Const MACRO_TITLE = "Export to Cura"
+
+Sub main()
+    Dim swApp As Object
+    Dim swModel As Object
+    Dim modelPath As String
+    Dim curaExe As String
+
+    Set swApp = Application.SldWorks
+    Set swModel = swApp.ActiveDoc
+    If swModel Is Nothing Then
+        MsgBox "Open a part or an assembly first.", vbInformation, MACRO_TITLE
+        Exit Sub
+    End If
+    If swModel.GetType <> swDocPART And swModel.GetType <> swDocASSEMBLY Then
+        MsgBox "Only parts and assemblies can be opened in Cura.", vbInformation, MACRO_TITLE
+        Exit Sub
+    End If
+
+    modelPath = swModel.GetPathName
+    If modelPath = "" Then
+        MsgBox "Save the document first: Cura opens it through its file.", vbInformation, MACRO_TITLE
+        Exit Sub
+    End If
+
+    curaExe = FindCura()
+    If curaExe = "" Then
+        MsgBox "Cannot find UltiMaker Cura on this computer.", vbExclamation, MACRO_TITLE
+        Exit Sub
+    End If
+
+    Shell """" & curaExe & """ --single-instance """ & modelPath & """", vbNormalFocus
+End Sub
+
+' The full path of Cura's executable, or "" when there is none.
+Function FindCura() As String
+    Dim command As String
+    Dim exePath As String
+
+    ' The Cura 5 installers register this file class for the model types they open (STL, OBJ, ...).
+    On Error Resume Next
+    command = CreateObject("WScript.Shell").RegRead("HKEY_CLASSES_ROOT\Cura.model\shell\open\command\")
+    On Error GoTo 0
+    ' The command looks like: "C:\Program Files\UltiMaker Cura 5.13.0\UltiMaker-Cura.exe" "%1"
+    If Left(command, 1) = """" And InStr(2, command, """") > 2 Then
+        exePath = Mid(command, 2, InStr(2, command, """") - 2)
+        If CreateObject("Scripting.FileSystemObject").FileExists(exePath) Then
+            FindCura = exePath
+            Exit Function
+        End If
+    End If
+
+    FindCura = NewestCuraInProgramFiles()
+End Function
+
+Function NewestCuraInProgramFiles() As String
+    Dim fso As Object
+    Dim folder As Object
+    Dim exeName As Variant
+    Dim version As String
+    Dim bestVersion As String
+
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If Not fso.FolderExists(Environ("ProgramFiles")) Then Exit Function
+
+    bestVersion = ""
+    For Each folder In fso.GetFolder(Environ("ProgramFiles")).SubFolders
+        If LCase(Left(folder.Name, 14)) = "ultimaker cura" Then
+            version = Trim(Mid(folder.Name, 15))
+            ' Cura 5.3 and newer: UltiMaker-Cura.exe, 5.0 - 5.2: Ultimaker-Cura.exe, 4.x: Cura.exe
+            For Each exeName In Array("UltiMaker-Cura.exe", "Cura.exe")
+                If fso.FileExists(folder.Path & "\" & exeName) Then
+                    If bestVersion = "" Or IsNewerVersion(version, bestVersion) Then
+                        bestVersion = version
+                        NewestCuraInProgramFiles = folder.Path & "\" & exeName
+                    End If
+                    Exit For
+                End If
+            Next
+        End If
+    Next
+End Function
+
+' Compares dotted version numbers such as "5.13.0" and "5.9.1" number by number.
+Function IsNewerVersion(candidate As String, current As String) As Boolean
+    Dim a As Variant
+    Dim b As Variant
+    Dim i As Integer
+    Dim x As Long
+    Dim y As Long
+
+    a = Split(candidate, ".")
+    b = Split(current, ".")
+    For i = 0 To 3
+        x = 0
+        y = 0
+        If i <= UBound(a) Then
+            If IsNumeric(a(i)) Then x = CLng(a(i))
+        End If
+        If i <= UBound(b) Then
+            If IsNumeric(b(i)) Then y = CLng(b(i))
+        End If
+        If x <> y Then
+            IsNewerVersion = x > y
+            Exit Function
+        End If
+    Next
+    IsNewerVersion = False
+End Function

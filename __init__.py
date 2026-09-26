@@ -1,25 +1,12 @@
 # Copyright (c) 2016 Thomas Karl Pietrowski
+# Copyright (c) 2026 CuraSolidWorksPlugin contributors
+# CuraSolidWorksPlugin is released under the terms of the LGPLv3 or higher.
 
-# TODO: Adding support for basic CATIA support
-
+from UM.Logger import Logger
 from UM.Platform import Platform
 
 from UM.i18n import i18nCatalog
-i18n_catalog = i18nCatalog("CuraSolidWorksIntegrationPlugin")
-
-if Platform.isWindows():
-    # For installation check
-    import winreg
-    # The reader plugin itself
-    from . import SolidWorksReader
-
-    def is_SolidWorks_available():
-        try:
-            # Could find a better key to detect whether SolidWorks is installed..
-            winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "SldWorks.Application")
-            return True
-        except:
-            return False
+i18n_catalog = i18nCatalog("cura")
 
 
 def getMetaData():
@@ -37,23 +24,19 @@ def getMetaData():
         ]
     }
 
-    # TODO:
-    # Needs more documentation on how to convert a CATproduct in CATIA using COM API
-    #
-    #{
-    #    "extension": "CATProduct",
-    #    "description": i18n_catalog.i18nc("@item:inlistbox", "CATproduct file")
-    #}
-
 
 def register(app):
-    # Solid works only runs on Windows.
-    plugin_data = {}
-    if Platform.isWindows():
-        reader = SolidWorksReader.SolidWorksReader()
-        # TODO: Feature: Add at this point an early check, whether readers are available. See: reader.areReadersAvailable()
-        if is_SolidWorks_available():
-            plugin_data["mesh_reader"] = reader
-        from .DialogHandler import DialogHandler
-        plugin_data["extension"] = DialogHandler()
+    if not Platform.isWindows():
+        Logger.log("i", "SolidWorks only runs on Windows; the SolidWorks Integration plugin has nothing to do here.")
+        return {}
+
+    # Imported here, on the main thread, and only on Windows: this pulls in the bundled comtypes (see ComAutomation).
+    from . import SolidWorksReader
+    from .DialogHandler import DialogHandler
+
+    plugin_data = {"extension": DialogHandler()}
+    if SolidWorksReader.isSolidWorksInstalled():
+        plugin_data["mesh_reader"] = SolidWorksReader.SolidWorksReader()
+    else:
+        Logger.log("w", "SolidWorks is not installed (no %s COM class), so SolidWorks files can't be opened.", SolidWorksReader.PROG_ID)
     return plugin_data

@@ -1,8 +1,8 @@
 {
     "name": "SolidWorks Integration",
     "author": "Thomas Karl Pietrowski",
-    "version": "0.3.7",
-    "description": "Gives you the possibility to open certain files via SolidWorks itself. These are then converted and loaded into Cura",
-    "api": 4,
+    "version": "1.0.0",
+    "description": "Opens SolidWorks parts and assemblies (*.SLDPRT, *.SLDASM) directly, by letting your SolidWorks installation convert them. Cura 5 port of the legacy Ultimaker plugin.",
+    "supported_sdk_versions": ["8.0.0"],
     "i18n-catalog": "cura"
 }

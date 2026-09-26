@@ -1,314 +1,202 @@
 // Copyright (c) 2017 Ultimaker B.V.
-// CuraSolidWorksPlugin is released under the terms of the AGPLv3 or higher.
+// Copyright (c) 2026 CuraSolidWorksPlugin contributors
+// CuraSolidWorksPlugin is released under the terms of the LGPLv3 or higher.
 
-import QtQuick 2.7
-import QtQuick.Controls 1.4
-import QtQuick.Layouts 1.1
-import QtQuick.Window 2.1
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.3
 
-import UM 1.2 as UM
+import UM 1.5 as UM
 import Cura 1.0 as Cura
 
 UM.Dialog
 {
     id: base
-    width: 1250 * Screen.devicePixelRatio
-    minimumWidth: 1250 * Screen.devicePixelRatio
 
-    height: 650 * Screen.devicePixelRatio
-    minimumHeight: 650 * Screen.devicePixelRatio
+    title: catalog.i18nc("@title:window", "How to add the \"Export to Cura\" button to SolidWorks")
 
-    title: catalog.i18nc("@title:window", "How to install Cura SolidWorks macro")
+    minimumWidth: Math.round(1000 * screenScaleFactor)
+    minimumHeight: Math.round(620 * screenScaleFactor)
+    width: minimumWidth
+    height: minimumHeight
 
-    property var currentStepIndex: 0
+    property int currentStep: 0
+    readonly property bool lastStep: currentStep == steps.count - 1
 
-    onVisibilityChanged:
+    onVisibleChanged:
     {
-        setCurrentStepIndex(0);
-    }
-
-    function setCurrentStepIndex(index)
-    {
-        currentStepIndex = index;
-        for (var i = 0; i < stepModel.count; ++i)
+        if (visible)
         {
-            const activated = i == currentStepIndex;
-            stepModel.get(i).activated = activated;
-            animation.source = "macro/tutorial/" + stepModel.get(currentStepIndex).gif_file_name;
-            animationSlider.maximumValue = animation.frameCount;
-            animationSlider.value = animation.currentFrame;
-            animation.playing = true;
+            currentStep = 0;
         }
     }
 
-    Row
+    RowLayout
     {
-        spacing: UM.Theme.getSize("default_margin").width
+        UM.I18nCatalog { id: catalog; name: "cura" }
 
-        UM.I18nCatalog { id: catalog; name: "CuraSolidWorksPlugin" }
-
-        Column
+        // Steps of the tutorial; lives here because UM.Dialog's own children must be Items.
+        ListModel
         {
-            id: stepsColumn
-            anchors.margins: UM.Theme.getSize("default_margin").width
-            width: base.width / 6
+            id: steps
+            ListElement
+            {
+                title: "Open SolidWorks"
+                description: "Start SolidWorks and open any part or assembly."
+                gif: "1_start_solidworks.gif"
+            }
+            ListElement
+            {
+                title: "Open the Customize dialog"
+                description: "Choose Tools > Customize, or right-click a toolbar and choose Customize."
+                gif: "2_open_customize_dialog.gif"
+            }
+            ListElement
+            {
+                title: "Go to Commands > Macro"
+                description: "Switch to the Commands tab and pick the Macro category."
+                gif: "3_switch_to_macro.gif"
+            }
+            ListElement
+            {
+                title: "Add a New Macro Button"
+                description: "Drag the New Macro Button icon onto a toolbar. In the dialog that opens, choose Export_to_Cura.swb as the macro (the animation still shows the old .swp file) and cura-icon_20x20.bmp as the icon; the Open macro folder button on the left shows both files. If SolidWorks asks for a method, choose main."
+                gif: "4_add_new_macro_button.gif"
+            }
+            ListElement
+            {
+                title: "Done!"
+                description: "The new button opens the active part or assembly in Cura, including changes you haven't saved yet. A document that was never saved has to be saved once first, because Cura opens it through its file. When Cura is already running, the file opens in that window if \"Use a single instance of Cura\" is on in Cura's preferences."
+                gif: "5_done.gif"
+            }
+        }
 
+        anchors.fill: parent
+        spacing: UM.Theme.getSize("default_margin").width * 2
+
+        ColumnLayout
+        {
+            Layout.preferredWidth: Math.round(base.width / 5)
+            Layout.maximumWidth: Math.round(base.width / 5)
+            Layout.fillHeight: true
             spacing: UM.Theme.getSize("default_margin").height
 
-            Label
+            UM.Label
             {
-                anchors.margins: UM.Theme.getSize("default_margin").width
-
-                text: catalog.i18nc("@description:label", "Steps:")
-                wrapMode: Text.WordWrap
-                font: UM.Theme.getFont("large")
-            }
-
-            ListModel
-            {
-                id: stepModel
-
-                ListElement {
-                    text: "Start SolidWorks"
-                    description: "Start SolidWorks 2016/2017 and make sure that you have a document open."
-                    gif_file_name: "1_start_solidworks.gif"
-                    activated: false
-                }
-                ListElement {
-                    text: "Open 'Customize' Dialog"
-                    description: "Select 'Customize' on the menu bar and open the 'Customize' dialog."
-                    gif_file_name: "2_open_customize_dialog.gif"
-                    activated: false
-                }
-                ListElement {
-                    text: "Switch to 'Macro'"
-                    description: "- Switch to 'Commands'\n- Choose 'Macro'"
-                    gif_file_name: "3_switch_to_macro.gif"
-                    activated: false
-                }
-                ListElement {
-                    text: "Add New Macro Button"
-                    description: "- Trag and drop the 'New Macro Button' icon onto the toolbar\n- Provide the Macro file location and an icon for it"
-                    gif_file_name: "4_add_new_macro_button.gif"
-                    activated: false
-                }
-                ListElement {
-                    text: "Done!"
-                    description: "- Now you have your 'Export model to Cura' button!"
-                    gif_file_name: "5_done.gif"
-                    activated: false
-                }
+                text: catalog.i18nc("@label", "Steps")
+                font: UM.Theme.getFont("large_bold")
             }
 
             Repeater
             {
-                model: stepModel
+                model: steps
 
-                Label
+                UM.Label
                 {
-                    anchors.margins: UM.Theme.getSize("default_margin").width
-
-                    text: String(model.index + 1) + ". " + catalog.i18nc("@title:label", model.text)
-                    wrapMode: Text.WordWrap
-                    font.bold: model.activated
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    text: (index + 1) + ". " + catalog.i18nc("@label", model.title)
+                    font: index == base.currentStep ? UM.Theme.getFont("default_bold") : UM.Theme.getFont("default")
 
                     MouseArea
                     {
                         anchors.fill: parent
-                        onClicked:
-                        {
-                            base.setCurrentStepIndex(model.index);
-                        }
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: base.currentStep = index
                     }
                 }
             }
 
-            Path
-            {
-                PathLine {}
-            }
+            Item { Layout.fillHeight: true }
 
-            Button
+            Cura.SecondaryButton
             {
-                id: getMacroAndIconLocationButton
-                anchors.topMargin: UM.Theme.getSize("default_margin").width * 10
-                anchors.leftMargin: UM.Theme.getSize("default_margin").width
-                anchors.rightMargin: UM.Theme.getSize("default_margin").width
-                anchors.bottomMargin: UM.Theme.getSize("default_margin").width
-                width: parent.width
-                height: UM.Theme.getSize("button").height
-                text: catalog.i18nc("@action:button", "Open the directory\nwith macro and icon")
-                onClicked:
-                {
-                    manager.openMacroAndIconDirectory();
-                }
+                Layout.fillWidth: true
+                text: catalog.i18nc("@action:button", "Open macro folder")
+                onClicked: manager.openMacroAndIconDirectory()
             }
         }
 
-        Column
+        ColumnLayout
         {
-            id: infoColumn
-            anchors.margins: UM.Theme.getSize("default_margin").width
-            width: base.width - stepsColumn.width - UM.Theme.getSize("default_margin").width * 3
-
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             spacing: UM.Theme.getSize("default_margin").height
 
-            Label
+            UM.Label
             {
-                anchors.margins: UM.Theme.getSize("default_margin").width
-
-                text: catalog.i18nc("@description:label", "Instructions:")
-                wrapMode: Text.WordWrap
-                font: UM.Theme.getFont("large")
+                text: catalog.i18nc("@label", "Instructions")
+                font: UM.Theme.getFont("large_bold")
             }
 
-            Label
+            UM.Label
             {
-                id: tutorialText
-
-                anchors.margins: UM.Theme.getSize("default_margin").width
-
-                text: catalog.i18nc("@description:label", stepModel.get(currentStepIndex).description)
-                wrapMode: Text.WordWrap
-                font: UM.Theme.getFont("default")
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: catalog.i18nc("@label", steps.get(base.currentStep).description)
             }
 
             AnimatedImage
             {
                 id: animation
-                anchors.margins: UM.Theme.getSize("default_margin").width
-                width: parent.width
-                height: parent.width / 2
-                source: "macro/tutorial/" + stepModel.get(currentStepIndex).gif_file_name
-
-                onSourceChanged:
-                {
-                    animationSlider.maximumValue = frameCount;
-                    animationSlider.value = currentFrame;
-                }
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                fillMode: Image.PreserveAspectFit
+                source: "macro/tutorial/" + steps.get(base.currentStep).gif
+                playing: true
             }
 
-            Row
+            RowLayout
             {
+                Layout.fillWidth: true
                 spacing: UM.Theme.getSize("default_margin").width
 
-                Button
+                Cura.SecondaryButton
                 {
-                    id: playPauseButton
-                    text:
-                    {
-                        if (!animation.playing)
-                        {
-                            return catalog.i18nc("@action:playpause", "Play");
-                        }
-                        else
-                        {
-                            return catalog.i18nc("@action:playpause", "Pause");
-                        }
-                    }
-
-                    onClicked:
-                    {
-                        var previousFrame = animation.currentFrame;
-                        const wasPaused = !animation.playing;
-                        animation.playing = !animation.playing;
-                        if (wasPaused)
-                        {
-                            animation.currentFrame = previousFrame;
-                        }
-                    }
+                    text: animation.playing ? catalog.i18nc("@action:button", "Pause") : catalog.i18nc("@action:button", "Play")
+                    onClicked: animation.playing = !animation.playing
                 }
 
                 Slider
                 {
-                    id: animationSlider
-                    anchors.margins: UM.Theme.getSize("default_margin").width
-                    width: animation.width * 2 / 3
-                    orientation: Qt.Horizontal
+                    Layout.fillWidth: true
+                    from: 0
+                    to: Math.max(animation.frameCount - 1, 0)
                     stepSize: 1
-                    minimumValue: 0
                     value: animation.currentFrame
-
-                    property var wasPlaying: true
-
-                    onValueChanged:
+                    onMoved:
                     {
-                        wasPlaying = animation.playing;
+                        animation.playing = false;
                         animation.currentFrame = value;
-                        animation.playing = wasPlaying;
                     }
-
-                    onPressedChanged:
-                    {
-                        if (pressed)
-                        {
-                            wasPlaying = animation.playing;
-                            animation.playing = false;
-                        }
-                        animation.playing = wasPlaying;
-                    }
-                }
-
-                Binding
-                {
-                    target: animationSlider
-                    property: "value"
-                    value: animation.currentFrame
                 }
             }
         }
     }
 
+    buttonSpacing: UM.Theme.getSize("default_margin").width
 
     rightButtons: [
-        Button
+        Cura.TertiaryButton
         {
-            id: prevStepButton
-            anchors.margins: UM.Theme.getSize("default_margin").width
             text: catalog.i18nc("@action:button", "Previous Step")
-            enabled: base.currentStepIndex > 0
+            enabled: base.currentStep > 0
+            onClicked: base.currentStep -= 1
+        },
+        Cura.PrimaryButton
+        {
+            text: base.lastStep ? catalog.i18nc("@action:button", "Done") : catalog.i18nc("@action:button", "Next Step")
             onClicked:
             {
-                base.setCurrentStepIndex(base.currentStepIndex - 1);
-            }
-        },
-        Button
-        {
-            id: nextStepButton
-            anchors.margins: UM.Theme.getSize("default_margin").width
-            text:
-            {
-                if (base.currentStepIndex + 1 == stepModel.count)
+                if (base.lastStep)
                 {
-                    return catalog.i18nc("@action:button", "Done")
+                    base.accept();
                 }
                 else
                 {
-                    return catalog.i18nc("@action:button", "Next Step")
+                    base.currentStep += 1;
                 }
             }
-            onClicked:
-            {
-                if (base.currentStepIndex + 1 == stepModel.count)
-                {
-                    close();
-                }
-                else
-                {
-                    base.setCurrentStepIndex(base.currentStepIndex + 1);
-                }
-            }
-        },
-        Button
-        {
-            id: closeButton
-            anchors.margins: UM.Theme.getSize("default_margin").width
-            text: catalog.i18nc("@action:button", "Close")
-            onClicked:
-            {
-                close();
-            }
-            enabled: true
         }
     ]
 }

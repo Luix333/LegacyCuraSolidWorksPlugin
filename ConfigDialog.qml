@@ -1,113 +1,114 @@
 // Copyright (c) 2017 Ultimaker B.V.
-// Cura is released under the terms of the AGPLv3 or higher.
+// Copyright (c) 2026 CuraSolidWorksPlugin contributors
+// CuraSolidWorksPlugin is released under the terms of the LGPLv3 or higher.
 
-import QtQuick 2.1
-import QtQuick.Controls 1.1
-import QtQuick.Layouts 1.1
-import QtQuick.Window 2.1
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.3
 
-import UM 1.2 as UM
+import UM 1.5 as UM
 import Cura 1.0 as Cura
 
 UM.Dialog
 {
-    width: 300 * Screen.devicePixelRatio
-    minimumWidth: 300 * Screen.devicePixelRatio
+    id: base
 
-    height: 100 * Screen.devicePixelRatio
-    minimumHeight: 100 * Screen.devicePixelRatio
+    title: catalog.i18nc("@title:window", "SolidWorks Integration Settings")
 
-    title: catalog.i18nc("@title:window", "Cura SolidWorks Plugin Configuration")
+    minimumWidth: UM.Theme.getSize("modal_window_minimum").width
+    minimumHeight: grid.implicitHeight + UM.Theme.getSize("default_margin").height * 6 + UM.Theme.getSize("button").height
+    width: minimumWidth
+    height: minimumHeight
 
-    onVisibilityChanged:
+    readonly property var qualityChoices: [
+        { text: catalog.i18nc("@item:inlistbox", "Ask every time"), code: "always_ask" },
+        { text: catalog.i18nc("@item:inlistbox", "Fine"), code: "always_use_fine" },
+        { text: catalog.i18nc("@item:inlistbox", "Coarse"), code: "always_use_coarse" },
+        { text: catalog.i18nc("@item:inlistbox", "As set in SolidWorks (Options > Export > STL)"), code: "always_use_solidworks" }
+    ]
+    readonly property var formatChoices: [
+        { text: catalog.i18nc("@item:inlistbox", "3MF: keeps bodies and assembly parts as separate objects"), code: "3mf" },
+        { text: catalog.i18nc("@item:inlistbox", "STL: one mesh for the whole file"), code: "stl" }
+    ]
+
+    function indexOf(choices, code)
+    {
+        for (var i = 0; i < choices.length; ++i)
+        {
+            if (choices[i].code == code)
+            {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    onVisibleChanged:
     {
         if (visible)
         {
-            choiceDropdown.updateCurrentIndex();
+            qualityBox.currentIndex = indexOf(qualityChoices, UM.Preferences.getValue("cura_solidworks/choice_on_exporting_stl_quality"));
+            formatBox.currentIndex = indexOf(formatChoices, UM.Preferences.getValue("cura_solidworks/transfer_format"));
         }
     }
 
     GridLayout
     {
-        UM.I18nCatalog{id: catalog; name: "cura"}
+        id: grid
+        UM.I18nCatalog { id: catalog; name: "cura" }
         anchors.fill: parent
-        Layout.fillWidth: true
-        columnSpacing: 16
-        rowSpacing: 10
-        columns: 1
+        columns: 2
+        columnSpacing: UM.Theme.getSize("default_margin").width
+        rowSpacing: UM.Theme.getSize("default_margin").height
 
-        Row
+        UM.Label { text: catalog.i18nc("@label", "Mesh resolution") }
+        Cura.ComboBox
         {
-            width: parent.width
-
-            Label {
-                text: catalog.i18nc("@action:label", "Default conversion quality:")
-                width: 150
-                anchors.verticalCenter: parent.verticalCenter
-            }
+            id: qualityBox
+            Layout.fillWidth: true
+            Layout.preferredHeight: UM.Theme.getSize("setting_control").height
+            textRole: "text"
+            model: base.qualityChoices
         }
 
-        Row
+        UM.Label { text: catalog.i18nc("@label", "Transfer format") }
+        Cura.ComboBox
         {
-            ComboBox
-            {
-                id: choiceDropdown
+            id: formatBox
+            Layout.fillWidth: true
+            Layout.preferredHeight: UM.Theme.getSize("setting_control").height
+            textRole: "text"
+            model: base.formatChoices
+        }
 
-                currentIndex: updateCurrentIndex()
-                width: 250
-
-                function updateCurrentIndex()
-                {
-                    var index = 0;
-                    var currentChoice = UM.Preferences.getValue("cura_solidworks/choice_on_exporting_stl_quality");
-                    for (var i = 0; i < model.count; ++i)
-                    {
-                        if (model.get(i).code == currentChoice)
-                        {
-                            index = i;
-                            break;
-                        }
-                    }
-                    currentIndex = index;
-                }
-
-                model: ListModel
-                {
-                    id: choiceModel
-
-                    Component.onCompleted:
-                    {
-                        append({ text: catalog.i18nc("@option:curaSolidworksStlQuality", "Always ask"), code: "always_ask" });
-                        append({ text: catalog.i18nc("@option:curaSolidworksStlQuality", "Fine quality"), code: "always_use_fine" });
-                        append({ text: catalog.i18nc("@option:curaSolidworksStlQuality", "Coarse quality"), code: "always_use_coarse" });
-                    }
-                }
-            }
+        UM.Label
+        {
+            Layout.columnSpan: 2
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: UM.Theme.getColor("text_medium")
+            text: catalog.i18nc("@label", "SolidWorks 2016 and older can only save STL; the other format is also used as a fallback when the preferred one fails.")
         }
     }
 
+    onAccepted:
+    {
+        UM.Preferences.setValue("cura_solidworks/choice_on_exporting_stl_quality", qualityChoices[qualityBox.currentIndex].code);
+        UM.Preferences.setValue("cura_solidworks/transfer_format", formatChoices[formatBox.currentIndex].code);
+    }
+
+    buttonSpacing: UM.Theme.getSize("default_margin").width
+
     rightButtons: [
-        Button
+        Cura.TertiaryButton
         {
-            id: ok_button
-            text: catalog.i18nc("@action:button", "OK")
-            onClicked:
-            {
-                UM.Preferences.setValue("cura_solidworks/choice_on_exporting_stl_quality",
-                    choiceModel.get(choiceDropdown.currentIndex).code);
-                close();
-            }
-            enabled: true
-        },
-        Button
-        {
-            id: cancel_button
             text: catalog.i18nc("@action:button", "Cancel")
-            onClicked:
-            {
-                close();
-            }
-            enabled: true
+            onClicked: base.reject()
+        },
+        Cura.PrimaryButton
+        {
+            text: catalog.i18nc("@action:button", "Save")
+            onClicked: base.accept()
         }
     ]
 }
