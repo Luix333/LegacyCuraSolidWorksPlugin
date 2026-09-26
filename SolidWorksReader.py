@@ -1,276 +1,192 @@
 # Copyright (c) 2017 Thomas Karl Pietrowski
+# Copyright (c) 2026 CuraSolidWorksPlugin contributors
+# CuraSolidWorksPlugin is released under the terms of the LGPLv3 or higher.
 
-# TODOs:
-# * Adding selection to separately import parts from an assembly
-
-# Build-ins
 import math
 import os
+import shutil
+import tempfile
+import threading
+import winreg
 
-# Uranium/Cura
+from UM.Application import Application
 from UM.i18n import i18nCatalog
-from UM.Message import Message
 from UM.Logger import Logger
-from UM.Math.Vector import Vector
 from UM.Math.Quaternion import Quaternion
+from UM.Math.Vector import Vector
 from UM.Mesh.MeshReader import MeshReader
+from UM.Message import Message
+from UM.MimeTypeDatabase import MimeTypeDatabase, MimeType, MimeTypeNotFoundError
 from UM.PluginRegistry import PluginRegistry
+from UM.Scene.Iterator.DepthFirstIterator import DepthFirstIterator
+from UM.Scene.SceneNode import SceneNode
 
-# Our plugin
-from .CommonComReader import CommonCOMReader
-from .SolidWorksConstants import SolidWorksEnums, SolidWorkVersions
+from cura.Scene.CuraSceneNode import CuraSceneNode
+from cura.Scene.ZOffsetDecorator import ZOffsetDecorator
+
+from .ComAutomation import COMError, initializeComForThread
 from .SolidWorksReaderUI import SolidWorksReaderUI
+from .SolidWorksSession import SolidWorksSession, SolidWorksError, PROG_ID, QUALITY_FINE, describeComError
 
-i18n_catalog = i18nCatalog("CuraSolidWorksIntegrationPlugin")
+catalog = i18nCatalog("cura")
+
+FORMAT_PREFERENCE = "cura_solidworks/transfer_format"
+FORMAT_3MF = "3mf"
+FORMAT_STL = "stl"
+
+# The Cura plugins that read what SolidWorks exports.
+_FORMAT_READERS = {FORMAT_3MF: "3MFReader", FORMAT_STL: "STLReader"}
+
+_MIME_TYPES = [MimeType(name = "application/x-sldworks-part", comment = "SolidWorks part file", suffixes = ["sldprt"]),
+               MimeType(name = "application/x-sldworks-assembly", comment = "SolidWorks assembly file", suffixes = ["sldasm"])]
 
 
-class SolidWorksReader(CommonCOMReader):
-    def __init__(self):
-        super().__init__("SldWorks.Application", "SolidWorks")
+def isSolidWorksInstalled() -> bool:
+    try:
+        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, PROG_ID))
+        return True
+    except OSError:
+        return False
 
-        self._extension_part = ".SLDPRT"
-        self._extension_assembly = ".SLDASM"
-        self._supported_extensions = [self._extension_part.lower(),
-                                      self._extension_assembly.lower(),
-                                      ]
 
-        self._convert_assembly_into_once = True  # False is not implemented now!
-        self._revision = None
-        self._revision_major = 0
-        self._revision_minor = 0
-        self._revision_patch = 0
+class SolidWorksReader(MeshReader):
+    # Conversions run one at a time: they share SolidWorks and its (global) export settings.
+    _conversion_lock = threading.Lock()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._supported_extensions = [".sldprt", ".sldasm"]
+        for mime_type in _MIME_TYPES:
+            MimeTypeDatabase.addMimeType(mime_type)
+
+        Application.getInstance().getPreferences().addPreference(FORMAT_PREFERENCE, FORMAT_3MF)
 
         self._ui = SolidWorksReaderUI()
-        self._selected_quality = None
-        self._quality_value_map = {"coarse": SolidWorksEnums.swSTLQuality_e.swSTLQuality_Coarse,
-                                   "fine": SolidWorksEnums.swSTLQuality_e.swSTLQuality_Fine}
+        self._quality_for_file = {}  # Chosen in preRead, used by _read. Several files can be loading at once.
 
-        self.root_component = None
-        
-    @property
-    def _file_formats_first_choice(self):
-        _file_formats_first_choice = [] # Ordered list of preferred formats
-
-        # Trying 3MF first because it describes the model much better..
-        # However, this is untested since this plugin was only tested with STL support
-        if self._revision_major >= 25 and PluginRegistry.getInstance().isActivePlugin("3MFReader"):
-            _file_formats_first_choice.append("3mf")
-
-        if PluginRegistry.getInstance().isActivePlugin("STLReader"):
-            _file_formats_first_choice.append("stl")
-
-        return _file_formats_first_choice
+    @staticmethod
+    def _fileKey(file_name: str) -> str:
+        return os.path.normcase(os.path.realpath(file_name))
 
     def preRead(self, file_name, *args, **kwargs):
-        self._ui.showConfigUI()
-        self._ui.waitForUIToClose()
-
-        if self._ui.getCancelled():
+        quality = self._ui.askQuality(os.path.basename(file_name))
+        if quality is None:
             return MeshReader.PreReadResult.cancelled
-
-        # get quality
-        self._selected_quality = self._ui.quality
-        if self._selected_quality is None:
-            self._selected_quality = "fine"
-        self._selected_quality = self._selected_quality.lower()
-
-        # give actual value for quality
-        self._selected_quality = self._quality_value_map.get(self._selected_quality,
-                                                             SolidWorksEnums.swSTLQuality_e.swSTLQuality_Fine)
-
+        self._quality_for_file[self._fileKey(file_name)] = quality
         return MeshReader.PreReadResult.accepted
 
-    def setAppVisible(self, state, options):
-        options["app_instance"].Visible = state
-
-    def getAppVisible(self, state, options):
-        return options["app_instance"].Visible
-
-    def startApp(self, options):
-        options = super().startApp(options)
-        
-        # Allow SolidWorks to run in the background and be invisible
-        options["app_instance"].UserControl = False
-        
-        #  ' If the following property is true, then the SolidWorks frame will be visible on a call to ISldWorks::ActivateDoc2; so set it to false
-        options["app_instance"].Visible = False
-
-        # Keep SolidWorks frame invisible when ISldWorks::ActivateDoc2 is called
-        options["app_frame"] = options["app_instance"].Frame()
-        options["app_frame"].KeepInvisible = True
-        
-        # Getting revision after starting
-        revision_number = options["app_instance"].RevisionNumber()
-
-        self._revision = [int(x) for x in revision_number.split(".")]
-
-        try:
-            self._revision_major = self._revision[0]
-            self._revision_minor = self._revision[1]
-            self._revision_patch = self._revision[2]
-        except IndexError:
-            pass
-
-        try:
-            Logger.log("d", "Running: %s", SolidWorkVersions.major_version_name[self._revision_major])
-        except KeyError:
-            Logger.logException("w", "Unable to get revision number from solid works RevisionNumber.")
-
-        return options
-
-    def checkApp(self, options):
-        functions_to_be_checked = ("OpenDoc", "CloseDoc")
-        for func in functions_to_be_checked:
+    def _read(self, file_name):
+        quality = self._quality_for_file.pop(self._fileKey(file_name), None) or self._ui.rememberedQuality() or QUALITY_FINE
+        with self._conversion_lock:
+            initializeComForThread()
+            temp_dir = tempfile.mkdtemp(prefix = "cura_solidworks_")
             try:
-                getattr(options["app_instance"], func)
-            except:
-                Logger.logException("e", "Error which occurred when checking for a valid app instance")
-                return False
-        return True
+                nodes = self._convert(file_name, temp_dir, quality)
+            except SolidWorksError as e:
+                Logger.log("e", "Converting %s failed: %s", file_name, e)
+                self._showError(str(e))
+                return None
+            except COMError as e:
+                Logger.logException("e", "Converting %s failed.", file_name)
+                self._showError(describeComError(e, file_name))
+                return None
+            except Exception as e:
+                Logger.logException("e", "Converting %s failed.", file_name)
+                self._showError(catalog.i18nc("@info:status", "Unexpected error while converting the file with SolidWorks: {}").format(e))
+                return None
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors = True)
 
-    def closeApp(self, options):
-        if "app_frame" in options.keys():
-            # Normally, we want to do that, but this confuses SolidWorks more than needed, it seems.
-            #options["app_frame"].KeepInvisible = False
-            pass
-        if "app_instance" in options.keys():
-            # Same here. By logic I would assume that we need to undo it, but when processing multiple parts, SolidWorks gets confused again..
-            # Or there is another sense..
-            #options["app_instance"].Visible = True
-            
-            # TODO: Check whether this can be useful. I assume it will close all documents from all windows.
-            #options["app_instance"].CloseAllDocuments(True) # Ensures that all docs have been closed!
-            pass
+        if not nodes:
+            return None
+        self._postProcess(nodes, file_name)
+        return nodes
 
-    def walkComponentsInAssembly(self, root = None):
-        if root is None:
-            root = self.root_component
+    def _preferredFormats(self):
+        preferred = Application.getInstance().getPreferences().getValue(FORMAT_PREFERENCE)
+        formats = [FORMAT_3MF, FORMAT_STL] if preferred == FORMAT_3MF else [FORMAT_STL, FORMAT_3MF]
+        return [f for f in formats if PluginRegistry.getInstance().isActivePlugin(_FORMAT_READERS[f])]
 
-        children = root.GetChildren
+    def _convert(self, file_name, temp_dir, quality):
+        formats = self._preferredFormats()
+        if not formats:
+            raise SolidWorksError(catalog.i18nc("@info:status", "Neither the 3MF nor the STL reader plugin is enabled in Cura, so the converted file can't be loaded."))
 
-        if children:
-            children = [self.walkComponentsInAssembly(child) for child in children]
-            return root, children
-        else:
-            return root
+        base_name = os.path.splitext(os.path.basename(file_name))[0]
+        last_error = None
+        with SolidWorksSession(Logger.log) as session:
+            document = session.openDocument(file_name)
+            try:
+                for file_format in formats:
+                    if file_format == FORMAT_3MF and not session.supports3mf():
+                        continue
+                    target = os.path.join(temp_dir, "{}.{}".format(base_name, file_format))
+                    try:
+                        session.export(document, target, quality)
+                    except SolidWorksError as e:
+                        Logger.log("w", "%s export failed, trying the next format: %s", file_format, e)
+                        last_error = e
+                        continue
+                    Logger.log("i", "%s saved %s as %s (%d bytes).", session.friendly_name, file_name, file_format.upper(), os.path.getsize(target))
+                    nodes = self._readExport(target)
+                    if nodes:
+                        return nodes
+                    last_error = SolidWorksError(catalog.i18nc("@info:status", "Cura could not read the {} file that SolidWorks produced.").format(file_format.upper()))
+            finally:
+                session.closeDocument(document)
+        raise last_error or SolidWorksError(catalog.i18nc("@info:status", "SolidWorks could not convert the file."))
 
-        """
-        models = options["sw_model"].GetComponents(True)
-
-        for model in models:
-            #Logger.log("d", model.GetModelDoc2())
-            #Logger.log("d", repr(model.GetTitle))
-            Logger.log("d", repr(model.GetPathName))
-            #Logger.log("d", repr(model.GetType))
-            if model.GetPathName in ComponentsCount.keys():
-                ComponentsCount[model.GetPathName] = ComponentsCount[model.GetPathName] + 1
-            else:
-                ComponentsCount[model.GetPathName] = 1
-
-        for key in ComponentsCount.keys():
-            Logger.log("d", "Found %s %s-times in the assembly!" %(key, ComponentsCount[key]))
-        """
-
-    def openForeignFile(self, options):
-        if options["foreignFormat"].upper() == self._extension_part:
-            filetype = SolidWorksEnums.FileTypes.SWpart
-        elif options["foreignFormat"].upper() == self._extension_assembly:
-            filetype = SolidWorksEnums.FileTypes.SWassembly
-        else:
-            raise NotImplementedError("Unknown extension. Something went terribly wrong!")
-
-        documentSpecification = options["app_instance"].GetOpenDocSpec(options["foreignFile"])
-        filename = os.path.split(options["foreignFile"])[1]
-
-        ## NOTE: SPEC: FileName
-        #documentSpecification.FileName
-
-        ## NOTE: SPEC: DocumentType
-        ## TODO: Really needed here?!
-        documentSpecification.DocumentType = filetype
-
-        ## TODO: Test the impact of LightWeight = True
-        #documentSpecification.LightWeight = True
-        documentSpecification.Silent = True
-
-        ## TODO: Double check, whether file was really opened read-only..
-        documentSpecification.ReadOnly = True
-
-        options["sw_model"] = options["app_instance"].OpenDoc7(documentSpecification._comobj)
-
-        if documentSpecification.Warning:
-            Logger.log("w", "Warnings happened while opening your SolidWorks file!")
-        if documentSpecification.Error:
-            Logger.log("e", "Errors happened while opening your SolidWorks file!")
-            error_message = Message(i18n_catalog.i18nc("@info:status", "Errors appeared while opening your SolidWorks file! \
-            Please check, whether it is possible to open your file in SolidWorks itself without any problems as well!" ))
-            error_message.show()
-
+    @staticmethod
+    def _readExport(path):
+        reader = Application.getInstance().getMeshFileHandler().getReaderForFile(path)
+        if reader is None:
+            return None
         try:
-            error, model_pointer = options["app_instance"].ActivateDoc3(filename, True, SolidWorksEnums.swRebuildOnActivation_e.swDontRebuildActiveDoc)
-            if model_pointer is None:
-                raise ValueError("No pointer has been returned by ActivateDoc3. Something went totally wrong!")
-            Logger.log("i", "Active document is now: <%s>", options["app_instance"].IActiveDoc2.GetPathName())
-        except:
-            Logger.log("d", "Activating the document failed. A patch in comtypes is needed to fix that!")
+            result = reader.read(path)
+        finally:
+            # The reader starts watching the temporary file for changes; the original file is what matters.
+            Application.getInstance().getController().getScene().removeWatchedFile(path)
+        if result is None:
+            return None
+        nodes = result if isinstance(result, list) else [result]
+        return [node for node in nodes if node is not None]
 
-        # Might be useful in the future, but no need for this ATM
-        #self.configuration = self.model.getActiveConfiguration
-        #self.root_component = self.configuration.GetRootComponent
+    @staticmethod
+    def _postProcess(nodes, file_name):
+        # SolidWorks keeps its own "Y is up" axes in STL and 3MF exports, while both formats (and so Cura's readers)
+        # assume Z is up. Tip the model back so that it stands in Cura the way it does in SolidWorks.
+        rotation = Quaternion.fromAngleAxis(math.radians(90), Vector.Unit_X)
+        name = os.path.basename(file_name)
+        try:
+            mime_type = MimeTypeDatabase.getMimeTypeForFile(file_name)
+        except MimeTypeNotFoundError:
+            mime_type = None
 
-        ## EXPERIMENTAL: Browse single parts in assembly
-        #if filetype == SolidWorksEnums.FileTypes.SWassembly:
-        #    Logger.log("d", 'walkComponentsInAssembly: ' + repr(self.walkComponentsInAssembly()))
+        for index, node in enumerate(nodes):
+            if isinstance(node, CuraSceneNode):
+                # Cura adds these nodes to the scene as they are, transformation included (3MF).
+                node.rotate(rotation, SceneNode.TransformSpace.Parent)
+                # The 3MF reader pins objects that reach below Z=0 at that depth, which is right for Cura projects
+                # but not for SolidWorks coordinates, where the origin can be anywhere. Let them drop onto the plate.
+                for descendant in DepthFirstIterator(node):
+                    descendant.removeDecorator(ZOffsetDecorator)
+            elif node.getMeshData() is not None:
+                # Of a plain SceneNode (STL) Cura only takes over the mesh data, so the rotation goes into the vertices.
+                node.setMeshData(node.getMeshData().getTransformed(rotation.toMatrix()))
 
-        return options
+            node.setName(name if len(nodes) == 1 else "{} ({})".format(name, index + 1))
+            if mime_type is not None:
+                node.source_mime_type = mime_type
+            # Point the meshes at the SolidWorks file, so "Reload" and the file-changed prompt use it (not the
+            # temporary export, which is gone by now).
+            for descendant in DepthFirstIterator(node):
+                mesh_data = descendant.getMeshData()
+                if mesh_data is not None:
+                    descendant.setMeshData(mesh_data.set(file_name = file_name))
 
-    def exportFileAs(self, options):
-        if options["tempType"] == "stl":
-            if options["foreignFormat"].upper() == self._extension_assembly:
-                # Backing up current setting of swSTLComponentsIntoOneFile
-                swSTLComponentsIntoOneFileBackup = options["app_instance"].GetUserPreferenceToggle(SolidWorksEnums.UserPreferences.swSTLComponentsIntoOneFile)
-                options["app_instance"].SetUserPreferenceToggle(SolidWorksEnums.UserPreferences.swSTLComponentsIntoOneFile, self._convert_assembly_into_once)
-
-            swExportSTLQualityBackup = options["app_instance"].GetUserPreferenceIntegerValue(SolidWorksEnums.swUserPreferenceIntegerValue_e.swExportSTLQuality)
-            options["app_instance"].SetUserPreferenceIntegerValue(SolidWorksEnums.swUserPreferenceIntegerValue_e.swExportSTLQuality, SolidWorksEnums.swSTLQuality_e.swSTLQuality_Fine)
-
-            # Changing the default unit for STLs to mm, which is expected by Cura
-            swExportStlUnitsBackup = options["app_instance"].GetUserPreferenceIntegerValue(SolidWorksEnums.swUserPreferenceIntegerValue_e.swExportStlUnits)
-            options["app_instance"].SetUserPreferenceIntegerValue(SolidWorksEnums.swUserPreferenceIntegerValue_e.swExportStlUnits, SolidWorksEnums.swLengthUnit_e.swMM)
-
-            # Changing the output type temporary to binary
-            swSTLBinaryFormatBackup = options["app_instance"].GetUserPreferenceToggle(SolidWorksEnums.swUserPreferenceToggle_e.swSTLBinaryFormat)
-            options["app_instance"].SetUserPreferenceToggle(SolidWorksEnums.swUserPreferenceToggle_e.swSTLBinaryFormat, True)
-
-        options["sw_model"].SaveAs(options["tempFile"])
-
-        if options["tempType"] == "stl":
-            # Restoring swSTLBinaryFormat
-            options["app_instance"].SetUserPreferenceToggle(SolidWorksEnums.swUserPreferenceToggle_e.swSTLBinaryFormat, swSTLBinaryFormatBackup)
-
-            # Restoring swExportStlUnits
-            options["app_instance"].SetUserPreferenceIntegerValue(SolidWorksEnums.swUserPreferenceIntegerValue_e.swExportStlUnits, swExportStlUnitsBackup)
-
-            # Restoring swSTLQuality_Fine
-            options["app_instance"].SetUserPreferenceIntegerValue(SolidWorksEnums.swUserPreferenceIntegerValue_e.swExportSTLQuality, swExportSTLQualityBackup)
-
-            if options["foreignFormat"].upper() == self._extension_assembly:
-                # Restoring swSTLComponentsIntoOneFile
-                options["app_instance"].SetUserPreferenceToggle(SolidWorksEnums.UserPreferences.swSTLComponentsIntoOneFile, swSTLComponentsIntoOneFileBackup)
-
-    def closeForeignFile(self, options):
-        #options["app_instance"].CloseDoc(options["foreignFile"])
-        options["app_instance"].QuitDoc(options["foreignFile"])
-
-    ## TODO: A functionality like this needs to come back as soon as we have something like a dependency resolver for plugins.
-    #def areReadersAvailable(self):
-    #    return bool(self._reader_for_file_format)
-
-    def nodePostProcessing(self, node):
-        # TODO: Investigate how the status is on SolidWorks 2018 (now beta)
-        if self._revision_major >= 24: # Known problem under SolidWorks 2016 until 2017: Exported models are rotated by -90 degrees. This rotates it back!
-            rotation = Quaternion.fromAngleAxis(math.radians(90), Vector.Unit_X)
-            node.rotate(rotation)
-        return node
-
-    ## Decide if we need to use ascii or binary in order to read file
+    @staticmethod
+    def _showError(text):
+        Message(text,
+                lifetime = 0,
+                title = catalog.i18nc("@info:title", "SolidWorks Integration"),
+                message_type = Message.MessageType.ERROR).show()

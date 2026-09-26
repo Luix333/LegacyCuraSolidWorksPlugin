@@ -94,3 +94,10 @@ ENV/
 # Eclipse + PyDev
 .project
 .pydevproject
+
+# Build output of tools/build_package.py
+dist/
+
+# Wrappers comtypes may generate at runtime
+thirdparty/comtypes/gen/*
+!thirdparty/comtypes/gen/__init__.py
