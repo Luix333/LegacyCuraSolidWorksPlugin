@@ -5,18 +5,24 @@
 
     python tools/build_package.py
 
-Packs the files git knows about (tracked, or new and not ignored), minus development-only folders.
+Packs the files git knows about (tracked, or new and not ignored), minus development-only folders. Fails if a
+packaged path would be left out of Cura's backups, since restoring one would then break the plugin.
 """
 
 import json
 import os
+import re
 import subprocess
+import sys
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGE_ID = "CuraSolidWorksPlugin"  # Also the plugin's folder name, which Cura uses as its plugin ID.
 EXCLUDED_PREFIXES = ("tests/", "tools/", "dist/", ".git")
 REPOSITORY = "https://github.com/Luix333/LegacyCuraSolidWorksPlugin"
+# Cura's Backups (cura/Backups/Backup.py, IGNORED_FILES, identical in 5.4 to 5.13) skip every path that one of these
+# matches with re.search, both when making a backup and when restoring it.
+BACKUP_IGNORED_FILES = [r"cura\.log", r"plugins\.json", r"cache", r"__pycache__", r"\.qmlc", r"\.pyc"]
 
 
 def pluginFiles():
@@ -24,6 +30,13 @@ def pluginFiles():
                              cwd = ROOT, check = True, capture_output = True, text = True).stdout.splitlines()
     return sorted(path for path in listing
                   if not path.startswith(EXCLUDED_PREFIXES) and os.path.isfile(os.path.join(ROOT, path)))
+
+
+def backupDroppedFiles(files):
+    """The files Cura's Backups would leave out, matched as installed from the package and as a folder copy."""
+    ignored = re.compile("|".join(BACKUP_IGNORED_FILES))
+    installed = ("plugins/{0}/{0}/{1}", "plugins/{0}/{1}")
+    return [path for path in files if any(ignored.search(where.format(PACKAGE_ID, path)) for where in installed)]
 
 
 def main():
@@ -45,6 +58,10 @@ def main():
     os.makedirs(os.path.join(ROOT, "dist"), exist_ok = True)
     target = os.path.join(ROOT, "dist", "{}-{}.curapackage".format(PACKAGE_ID, plugin["version"]))
     files = pluginFiles()
+    dropped = backupDroppedFiles(files)
+    if dropped:
+        sys.exit("Not building: Cura's backups would drop these files (their paths match {}), and a restored backup "
+                 "would then miss them:\n  {}".format(BACKUP_IGNORED_FILES, "\n  ".join(dropped)))
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("package.json", json.dumps(package, indent = 4))
         archive.write(os.path.join(ROOT, "LICENSE"), "LICENSE")

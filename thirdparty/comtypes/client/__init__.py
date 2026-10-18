@@ -6,7 +6,7 @@ import logging
 from comtypes import RevokeActiveObject, automation  # noqa
 from comtypes.client import dynamic, lazybind  # noqa
 from comtypes.client._activeobj import RegisterActiveObject  # noqa
-from comtypes.client._code_cache import _find_gen_dir
+from comtypes.client._gen_dir import _find_gen_dir
 from comtypes.client._constants import Constants  # noqa
 from comtypes.client._events import GetEvents, PumpEvents, ShowEvents
 from comtypes.client._generate import GetModule

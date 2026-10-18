@@ -1,4 +1,4 @@
-"""comtypes.client._code_cache helper module.
+"""comtypes.client._gen_dir helper module (renamed from _code_cache, see thirdparty/README.md).
 
 The main function is _find_gen_dir(), which on-demand creates the
 comtypes.gen package and returns a directory where generated code can
